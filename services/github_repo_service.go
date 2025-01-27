@@ -1,96 +1,81 @@
 package services
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
+	"strings"
 )
 
-// GitHubFile defines github file structure
-type GitHubFile struct {
-	Name string `json:"name"`
-	Path string `json:"path"`
-	Type string `json:"type"`
+// GitHubFileContent represents the structure of the file content response from the GitHub API
+type GitHubFileContent struct {
+	Content  string `json:"content"`
+	Encoding string `json:"encoding"`
 }
 
-// ListRepFiles returns list of all files in repository
-func ListRepFiles(owner, repo, token string) ([]string, error) {
-	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/contents", owner, repo)
-	req, err := http.NewRequest("GET", url, nil)
+// ConvertGitHubURLToAPIURL converts a GitHub URL to a GitHub API URL
+func ConvertGitHubURLToAPIURL(gitHubURL string) (string, error) {
+	parsedURL, err := url.Parse(gitHubURL)
 	if err != nil {
-		return nil, err
+		return "", fmt.Errorf("invalid URL: %w", err)
 	}
 
-	req.Header.Set("Authorization", "token "+token)
+	// Check if the URL belongs to GitHub
+	if parsedURL.Host != "github.com" {
+		return "", fmt.Errorf("URL must belong to github.com")
+	}
+
+	pathParts := strings.Split(strings.Trim(parsedURL.Path, "/"), "/")
+	if len(pathParts) < 5 || pathParts[2] != "blob" {
+		return "", fmt.Errorf("URL must point to a file in a repository in the format: https://github.com/{owner}/{repo}/blob/{branch}/{filePath}")
+	}
+
+	owner := pathParts[0]
+	repo := pathParts[1]
+	branch := pathParts[3]
+	filePath := strings.Join(pathParts[4:], "/")
+
+	apiURL := fmt.Sprintf("https://api.github.com/repos/%s/%s/contents/%s?ref=%s", owner, repo, filePath, branch)
+	return apiURL, nil
+}
+
+// FetchFileContentFromURL fetches the content of a file using a GitHub API URL
+func FetchFileContentFromURL(apiURL, token string) (string, error) {
+	req, err := http.NewRequest("GET", apiURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if token != "" {
+		req.Header.Set("Authorization", "token "+token)
+	}
+
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, err
+		return "", fmt.Errorf("failed to fetch file content: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("failed to get contents: %s", resp.Status)
+		return "", fmt.Errorf("failed to fetch file content: %s", resp.Status)
 	}
 
-	var files []GitHubFile
-	if err := json.NewDecoder(resp.Body).Decode(&files); err != nil {
-		return nil, err
+	var fileContent GitHubFileContent
+	if err := json.NewDecoder(resp.Body).Decode(&fileContent); err != nil {
+		return "", fmt.Errorf("failed to decode response: %w", err)
 	}
 
-	var fileList []string
-	for _, file := range files {
-		if file.Type == "file" {
-			fileList = append(fileList, file.Path)
-		} else if file.Type == "dir" {
-			subFiles, err := ListFilesInDir(owner, repo, token, file.Path)
-			if err != nil {
-				return nil, err
-			}
-			fileList = append(fileList, subFiles...)
-		}
+	if fileContent.Encoding != "base64" {
+		return "", fmt.Errorf("unsupported file encoding: %s", fileContent.Encoding)
 	}
 
-	return fileList, nil
-}
-
-// ListFilesInDir returns list of all files in directory
-func ListFilesInDir(owner, repo, token, dir string) ([]string, error) {
-	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/contents/%s", owner, repo, dir)
-	req, err := http.NewRequest("GET", url, nil)
+	decodedContent, err := base64.StdEncoding.DecodeString(fileContent.Content)
 	if err != nil {
-		return nil, err
+		return "", fmt.Errorf("failed to decode file content: %w", err)
 	}
 
-	req.Header.Set("Authorization", "token "+token)
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("failed to get contents: %s", resp.Status)
-	}
-
-	var files []GitHubFile
-	if err := json.NewDecoder(resp.Body).Decode(&files); err != nil {
-		return nil, err
-	}
-
-	var fileList []string
-	for _, file := range files {
-		if file.Type == "file" {
-			fileList = append(fileList, file.Path)
-		} else if file.Type == "dir" {
-			subFiles, err := ListFilesInDir(owner, repo, token, file.Path)
-			if err != nil {
-				return nil, err
-			}
-			fileList = append(fileList, subFiles...)
-		}
-	}
-
-	return fileList, nil
+	return string(decodedContent), nil
 }

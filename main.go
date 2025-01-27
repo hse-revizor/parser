@@ -1,44 +1,53 @@
 package main
 
 import (
-	"flag"
+	"encoding/json"
 	"fmt"
-	"github.com/joho/godotenv"
+	"net/http"
 	"os"
+
+	"github.com/gorilla/mux"
 	"parser/services"
 )
 
-func main() {
-	// Parsing command line arguments
-	repoOwner := flag.String("owner", "", "Owner of the GitHub repository")
-	repoName := flag.String("repo", "", "Name of the GitHub repository")
-	flag.Parse()
-
-	if *repoOwner == "" || *repoName == "" {
-		fmt.Println("You must specify the repository owner, name, and GitHub token using the -owner, -repo, and -token flags.")
+// ContentHandler handles the GET request for file content
+func ContentHandler(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query()
+	uri := query.Get("uri")
+	if uri == "" {
+		http.Error(w, "Missing 'uri' query parameter", http.StatusBadRequest)
 		return
 	}
 
-	if err := godotenv.Load(); err != nil {
-		fmt.Println("No .env file found.")
-		return
-	}
-
-	gitAccessToken, exists := os.LookupEnv("GIT_ACCESS_TOKEN")
-	if !exists {
-		fmt.Println("No GITHUB access token provided.")
-		return
-	}
-
-	// Getting all repo files' names
-	files, err := services.ListRepFiles(*repoOwner, *repoName, gitAccessToken)
+	token := os.Getenv("GIT_ACCESS_TOKEN")
+	apiURL, err := services.ConvertGitHubURLToAPIURL(uri)
 	if err != nil {
-		fmt.Println("Error listing files:", err)
+		http.Error(w, fmt.Sprintf("Invalid GitHub URL: %v", err), http.StatusBadRequest)
 		return
 	}
 
-	fmt.Println("Files in repository:")
-	for _, file := range files {
-		fmt.Println(file)
+	content, err := services.FetchFileContentFromURL(apiURL, token)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Error fetching content: %v", err), http.StatusInternalServerError)
+		return
 	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"content": content})
+}
+
+// Main function sets up the router and starts the server
+func main() {
+	router := mux.NewRouter()
+
+	// Define the /content endpoint
+	router.HandleFunc("/content", ContentHandler).Methods("GET")
+
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+
+	fmt.Printf("Server is running on port %s\n", port)
+	http.ListenAndServe(":"+port, router)
 }
