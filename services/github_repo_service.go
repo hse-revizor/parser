@@ -9,24 +9,19 @@ import (
 	"strings"
 )
 
-// GitHubFileContent represents the structure of the file content response from the GitHub API
 type GitHubFileContent struct {
 	Content  string `json:"content"`
 	Encoding string `json:"encoding"`
 }
 
-// ConvertGitHubURLToAPIURL converts a GitHub URL to a GitHub API URL
 func ConvertGitHubURLToAPIURL(gitHubURL string) (string, error) {
 	parsedURL, err := url.Parse(gitHubURL)
 	if err != nil {
 		return "", fmt.Errorf("invalid URL: %w", err)
 	}
-
-	// Check if the URL belongs to GitHub
 	if parsedURL.Host != "github.com" {
 		return "", fmt.Errorf("URL must belong to github.com")
 	}
-
 	pathParts := strings.Split(strings.Trim(parsedURL.Path, "/"), "/")
 	if len(pathParts) < 5 || pathParts[2] != "blob" {
 		return "", fmt.Errorf("URL must point to a file in a repository in the format: https://github.com/{owner}/{repo}/blob/{branch}/{filePath}")
@@ -41,13 +36,11 @@ func ConvertGitHubURLToAPIURL(gitHubURL string) (string, error) {
 	return apiURL, nil
 }
 
-// FetchFileContentFromURL fetches the content of a file using a GitHub API URL
 func FetchFileContentFromURL(apiURL, token string) (string, error) {
 	req, err := http.NewRequest("GET", apiURL, nil)
 	if err != nil {
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}
-
 	if token != "" {
 		req.Header.Set("Authorization", "token "+token)
 	}
